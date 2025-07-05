@@ -2,28 +2,27 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { inject as service } from "@ember/service";
-import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
-import TopicList from "discourse/components/topic-list";
 import { apiInitializer } from "discourse/lib/api";
 import { defaultHomepage } from "discourse/lib/utilities";
+import I18n from "I18n";
 
-// Global set to keep track of shown topic IDs
+// Global Set to store topic IDs already rendered
 const renderedTopicIds = new Set();
 
 export default apiInitializer("1.14.0", (api) => {
-  const filtered_topics_lists = settings.presets;
+  const filteredTopicsLists = settings.presets;
 
-  filtered_topics_lists.forEach((LIST) => {
-    const list_title = LIST.title.trim();
-    const list_length = LIST.length;
-    const list_query = LIST.query.trim();
-    const list_plugin_outlet = LIST.plugin_outlet.trim();
-    const list_show_on = LIST.show_on;
-    const list_selected_categories = LIST.selected_categories;
-    const list_selected_tags = LIST.selected_tags;
+  filteredTopicsLists.forEach((LIST) => {
+    const listTitle = LIST.title.trim();
+    const listLength = LIST.length;
+    const listQuery = LIST.query.trim();
+    const listPluginOutlet = LIST.plugin_outlet.trim();
+    const listShowOn = LIST.show_on;
+    const listSelectedCategories = LIST.selected_categories;
+    const listSelectedTags = LIST.selected_tags;
 
     api.renderInOutlet(
-      list_plugin_outlet,
+      listPluginOutlet,
       class FilteredList extends Component {
         @service store;
         @service router;
@@ -43,23 +42,19 @@ export default apiInitializer("1.14.0", (api) => {
 
             const topicList = await this.store.findFiltered("topicList", {
               filter: "filter",
-              params: {
-                q: list_query,
-              },
+              params: { q: listQuery },
             });
 
             if (topicList.topics) {
-              // Remove already rendered topics
               const uniqueTopics = topicList.topics.filter(
                 (t) => !renderedTopicIds.has(t.id)
               );
 
-              // Store topic IDs globally to prevent duplication
-              uniqueTopics.slice(0, list_length).forEach((t) =>
+              uniqueTopics.slice(0, listLength).forEach((t) =>
                 renderedTopicIds.add(t.id)
               );
 
-              this.filteredTopics = uniqueTopics.slice(0, list_length);
+              this.filteredTopics = uniqueTopics.slice(0, listLength);
             }
           } finally {
             this.isLoading = false;
@@ -69,7 +64,7 @@ export default apiInitializer("1.14.0", (api) => {
         get showOnRoute() {
           const currentRoute = this.router.currentRoute;
 
-          switch (list_show_on) {
+          switch (listShowOn) {
             case "everywhere":
               return !currentRoute.name.includes("admin");
 
@@ -111,47 +106,23 @@ export default apiInitializer("1.14.0", (api) => {
               return currentRoute.name === "discovery.hot";
 
             case "selected_categories":
-              const category_id = currentRoute.attributes?.category?.id;
+              const categoryId = currentRoute.attributes?.category?.id;
               return (
                 currentRoute.name === "discovery.category" &&
-                list_selected_categories.includes(category_id)
+                listSelectedCategories.includes(categoryId)
               );
 
             case "selected_tags":
-              const tag_id = currentRoute.attributes?.tag?.id;
+              const tagId = currentRoute.attributes?.tag?.id;
               return (
                 currentRoute.name === "tag.show" &&
-                list_selected_tags.includes(tag_id)
+                listSelectedTags.includes(tagId)
               );
 
             default:
               return false;
           }
         }
-
-        // Template: Move this to corresponding hbs file or precompiled template system
-        /*
-        <template>
-          {{#if this.showOnRoute}}
-            <div class="filtered-topics-list {{list_plugin_outlet}}">
-              <div class="filtered-topics-list__wrapper">
-                {{#if list_title}}
-                  <div class="filtered-topics-list__header">
-                    <h2>{{list_title}}</h2>
-                  </div>
-                {{/if}}
-                <ConditionalLoadingSpinner @condition={{this.isLoading}}>
-                  <TopicList
-                    @topics={{this.filteredTopics}}
-                    @showPosters="true"
-                    class="filtered-topics-list__content"
-                  />
-                </ConditionalLoadingSpinner>
-              </div>
-            </div>
-          {{/if}}
-        </template>
-        */
       }
     );
   });
