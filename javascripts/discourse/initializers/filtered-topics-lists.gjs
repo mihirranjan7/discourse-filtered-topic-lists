@@ -10,41 +10,12 @@ import { defaultHomepage } from "discourse/lib/utilities";
 export default apiInitializer("1.14.0", (api) => {
   const filtered_topics_lists = settings.presets;
 
-  // This will keep track, per page-load, of loaded topics for deduplication
-  let seenTopicIds = new Set();
-  let globalResults = [];
-
-  // Fire all requests in parallel, deduplicate up-front,
-  // then distribute topics to each FilteredList instance
-  async function fetchAllAndDeduplicate(store) {
-    const requests = filtered_topics_lists.map(LIST => {
-      return store.findFiltered("topicList", {
-        filter: "filter",
-        params: { q: LIST.query.trim() }
-      });
-    });
-
-    const allRawResults = await Promise.all(requests);
-
-    seenTopicIds.clear();
-    globalResults = filtered_topics_lists.map((LIST, idx) => {
-      let deduped = [];
-      let topicList = allRawResults[idx].topics || [];
-      for (let topic of topicList) {
-        if (!seenTopicIds.has(topic.id)) {
-          deduped.push(topic);
-          seenTopicIds.add(topic.id);
-        }
-        if (deduped.length >= LIST.length) break;
-      }
-      return deduped;
-    });
-  }
-
-  let fetched = false; // Prevent refetching on every component init
+  // Shared set for deduplication across all FilteredList instances
+  const seenTopicIds = new Set();
 
   filtered_topics_lists.forEach((LIST, idx) => {
     const list_length = LIST.length;
+    const list_query = LIST.query.trim();
     const list_plugin_outlet = LIST.plugin_outlet.trim();
     const list_show_on = LIST.show_on;
     const list_selected_categories = LIST.selected_categories;
@@ -61,18 +32,32 @@ export default apiInitializer("1.14.0", (api) => {
 
         constructor() {
           super(...arguments);
-          this.loadAllListsOnce();
+          if (idx === 0) seenTopicIds.clear();
+          this.findFilteredTopics();
         }
 
         @action
-        async loadAllListsOnce() {
-          if (!fetched) {
-            this.isLoading = true;
-            await fetchAllAndDeduplicate(this.store);
-            fetched = true;
-            this.isLoading = false;
+        async findFilteredTopics() {
+          this.isLoading = true;
+          const topicList = await this.store.findFiltered("topicList", {
+            filter: "filter",
+            params: { q: list_query },
+          });
+
+          if (topicList.topics) {
+            const deduped = [];
+            for (let topic of topicList.topics) {
+              if (!seenTopicIds.has(topic.id)) {
+                deduped.push(topic);
+                seenTopicIds.add(topic.id);
+              }
+              if (deduped.length >= list_length) break;
+            }
+            this.filteredTopics = deduped;
+          } else {
+            this.filteredTopics = [];
           }
-          this.filteredTopics = globalResults[idx] || [];
+          this.isLoading = false;
         }
 
         get showOnRoute() {
