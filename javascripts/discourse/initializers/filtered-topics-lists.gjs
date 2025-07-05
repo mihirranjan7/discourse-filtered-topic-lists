@@ -10,10 +10,11 @@ import { defaultHomepage } from "discourse/lib/utilities";
 export default apiInitializer("1.14.0", (api) => {
   const filtered_topics_lists = settings.presets;
 
-  // Shared set for deduplication across all FilteredList instances
+  // Shared set of seen topic IDs for deduplication across all FilteredList instances
   const seenTopicIds = new Set();
 
   filtered_topics_lists.forEach((LIST, idx) => {
+    const list_title = LIST.title.trim();
     const list_length = LIST.length;
     const list_query = LIST.query.trim();
     const list_plugin_outlet = LIST.plugin_outlet.trim();
@@ -30,8 +31,12 @@ export default apiInitializer("1.14.0", (api) => {
         @tracked filteredTopics = [];
         @tracked isLoading = false;
 
+        @tracked categories = [];
+        @tracked tags = [];
+
         constructor() {
           super(...arguments);
+          // The first list resets the deduplication between hard reloads or SPAs
           if (idx === 0) seenTopicIds.clear();
           this.findFilteredTopics();
         }
@@ -44,6 +49,7 @@ export default apiInitializer("1.14.0", (api) => {
             params: { q: list_query },
           });
 
+          // Deduplicate:
           if (topicList.topics) {
             const deduped = [];
             for (let topic of topicList.topics) {
@@ -51,6 +57,7 @@ export default apiInitializer("1.14.0", (api) => {
                 deduped.push(topic);
                 seenTopicIds.add(topic.id);
               }
+              // Stop if we've reached the required length for this list
               if (deduped.length >= list_length) break;
             }
             this.filteredTopics = deduped;
@@ -108,10 +115,16 @@ export default apiInitializer("1.14.0", (api) => {
           }
         }
 
+        // The template should remain unchanged
         static template = /* hbs */ `
           {{#if this.showOnRoute}}
             <div class="filtered-topics-list ${list_plugin_outlet}">
               <div class="filtered-topics-list__wrapper">
+                {{#if "${list_title}"}}
+                  <div class="filtered-topics-list__header">
+                    <h2>${list_title}</h2>
+                  </div>
+                {{/if}}
                 <ConditionalLoadingSpinner @condition={{this.isLoading}}>
                   <TopicList
                     @topics={{this.filteredTopics}}
