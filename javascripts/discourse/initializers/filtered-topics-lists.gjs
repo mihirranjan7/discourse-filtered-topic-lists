@@ -2,7 +2,6 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { inject as service } from "@ember/service";
-import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
 import TopicList from "discourse/components/topic-list";
 import { apiInitializer } from "discourse/lib/api";
 import { defaultHomepage } from "discourse/lib/utilities";
@@ -29,7 +28,6 @@ export default apiInitializer("1.14.0", (api) => {
         @service router;
         @service siteSettings;
         @tracked filteredTopics = [];
-        @tracked isLoading = false; // Add loading state for better UX
 
         @tracked categories = [];
         @tracked tags = [];
@@ -41,7 +39,6 @@ export default apiInitializer("1.14.0", (api) => {
 
         @action
         async findFilteredTopics() {
-          this.isLoading = true; // Set loading to true while fetching
           try {
             const topicList = await this.store.findFiltered("topicList", {
               filter: "filter",
@@ -66,7 +63,7 @@ export default apiInitializer("1.14.0", (api) => {
               this.filteredTopics = uniqueTopics;
             }
           } finally {
-            this.isLoading = false; // Always set loading to false when done
+            // No loading state to manage here
           }
         }
 
@@ -142,13 +139,11 @@ export default apiInitializer("1.14.0", (api) => {
                     <h2>{{list_title}}</h2>
                   </div>
                 {{/if}}
-                <ConditionalLoadingSpinner @condition={{this.isLoading}}>
-                  <TopicList
-                    @topics={{this.filteredTopics}}
-                    @showPosters="true"
-                    class="filtered-topics-list__content"
-                  />
-                </ConditionalLoadingSpinner>
+                <TopicList
+                  @topics={{this.filteredTopics}}
+                  @showPosters="true"
+                  class="filtered-topics-list__content"
+                />
               </div>
             </div>
           {{/if}}
