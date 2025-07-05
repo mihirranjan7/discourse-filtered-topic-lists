@@ -2,28 +2,23 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { inject as service } from "@ember/service";
-// ConditionalLoadingSpinner is removed
+import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
 import TopicList from "discourse/components/topic-list";
 import { apiInitializer } from "discourse/lib/api";
 import { defaultHomepage } from "discourse/lib/utilities";
 
-// --- Caching and Global State ---
-// A simple in-memory cache for topic list data based on the query.
-// Stores promises, so concurrent requests for the same query don't re-fetch.
-const topicListCache = new Map();
-
-// Global set to keep track of topic IDs that have already been displayed across all lists
+// Global set to keep track of topic IDs that have already been displayed
 const displayedTopicIds = new Set();
-// --- End Caching and Global State ---
 
 export default apiInitializer("1.14.0", (api) => {
   const filtered_topics_lists = settings.presets;
 
-  // --- Define the individual FilteredList component (now presentation-only and no spinner) ---
+  // Define the individual FilteredList component (now presentation-only)
   class FilteredList extends Component {
     @service router;
     @service siteSettings;
 
+    // These are now received as arguments from the parent component
     // @arguments: @listTitle, @listLength, @listQuery, @listPluginOutlet, @listShowOn, @listSelectedCategories, @listSelectedTags, @filteredTopics
 
     get showOnRoute() {
@@ -99,8 +94,7 @@ export default apiInitializer("1.14.0", (api) => {
                 <h2>{{this.args.listTitle}}</h2>
               </div>
             {{/if}}
-            {{! The TopicList component will render with whatever topics it receives }}
-            {{! If @filteredTopics is null or empty initially, it will render an empty list }}
+            {{! ConditionalLoadingSpinner is now handled by the parent component }}
             <TopicList
               @topics={{this.args.filteredTopics}}
               @showPosters="true"
@@ -112,92 +106,83 @@ export default apiInitializer("1.14.0", (api) => {
     </template>
   }
 
-  // --- Define the main container component that fetches all data ---
+  // Define the main container component that fetches all data
   api.renderInOutlet(
-    // !!! IMPORTANT: Verify this plugin outlet is active on the pages
-    // where you expect your lists to appear.
-    // Common choices: "above-topic-list-bottom", "topic-list-before",
-    // "above-main-content", or a custom one from your theme.
+    // Choose an appropriate plugin outlet where you want these lists to appear.
+    // 'above-topic-list-bottom' or 'topic-list-before' are common.
+    // Ensure this outlet exists in your Discourse theme/plugin.
     "above-topic-list-bottom",
     class AllFilteredListsContainer extends Component {
       @service store;
       @tracked allListsData = {}; // Stores fetched topics keyed by list title
+      @tracked isLoadingAllLists = false;
 
       constructor() {
         super(...arguments);
         // Clear displayedTopicIds on initialization of the container
-        // to ensure fresh unique lists on page load/re-render.
+        // to ensure fresh lists on page load/re-render.
         displayedTopicIds.clear();
         this.fetchAllFilteredTopics();
       }
 
       @action
       async fetchAllFilteredTopics() {
-        const fetchPromises = filtered_topics_lists.map(async (LIST) => {
-          const listQuery = LIST.query.trim();
-
-          // 1. Check cache first
-          if (topicListCache.has(listQuery)) {
-            // Return the promise from the cache if it exists (for de-duplication of fetches)
-            return topicListCache.get(listQuery).then(cachedResult => ({
-                listTitle: LIST.title.trim(),
-                topics: cachedResult.topics,
-                length: LIST.length,
-            }));
-          }
-
-          // 2. If not in cache, create a new fetch promise
-          const fetchPromise = this.store.findFiltered("topicList", {
-            filter: "filter",
-            params: {
-              q: listQuery,
-            },
-          }).then(topicList => ({
+        this.isLoadingAllLists = true;
+        try {
+          const fetchPromises = filtered_topics_lists.map(async (LIST) => {
+            const topicList = await this.store.findFiltered("topicList", {
+              filter: "filter",
+              params: {
+                q: LIST.query.trim(),
+              },
+            });
+            return {
               listTitle: LIST.title.trim(),
               topics: topicList.topics,
-              length: LIST.length,
-          }));
+              length: LIST.length, // Pass the desired length
+            };
+          });
 
-          // Store the promise in the cache
-          topicListCache.set(listQuery, fetchPromise);
-          return fetchPromise;
-        });
+          const results = await Promise.all(fetchPromises);
+          const consolidatedData = {};
 
-        const results = await Promise.all(fetchPromises);
-        const consolidatedData = {};
-
-        results.forEach((result) => {
-          const uniqueTopics = [];
-          for (const topic of result.topics || []) {
-            if (!displayedTopicIds.has(topic.id)) {
-              uniqueTopics.push(topic);
-              displayedTopicIds.add(topic.id);
+          results.forEach((result) => {
+            const uniqueTopics = [];
+            for (const topic of result.topics || []) { // Ensure topicList.topics is not null/undefined
+              // If the topic hasn't been displayed yet
+              if (!displayedTopicIds.has(topic.id)) {
+                uniqueTopics.push(topic);
+                displayedTopicIds.add(topic.id); // Add it to our global tracker
+              }
+              // Stop once we've collected enough unique topics for this list
+              if (uniqueTopics.length >= result.length) {
+                break;
+              }
             }
-            if (uniqueTopics.length >= result.length) {
-              break;
-            }
-          }
-          consolidatedData[result.listTitle] = uniqueTopics;
-        });
+            consolidatedData[result.listTitle] = uniqueTopics;
+          });
 
-        this.allListsData = consolidatedData;
+          this.allListsData = consolidatedData;
+        } finally {
+          this.isLoadingAllLists = false; // Always set loading to false when done
+        }
       }
 
       <template>
-        {{! No ConditionalLoadingSpinner here }}
-        {{#each filtered_topics_lists as |LIST|}}
-          <FilteredList
-            @listTitle={{LIST.title.trim}}
-            @listLength={{LIST.length}}
-            @listQuery={{LIST.query.trim}}
-            @listPluginOutlet={{LIST.plugin_outlet.trim}}
-            @listShowOn={{LIST.show_on}}
-            @listSelectedCategories={{LIST.selected_categories}}
-            @listSelectedTags={{LIST.selected_tags}}
-            {{! Pass the fetched data (might be empty initially) }}
-            @filteredTopics={{this.allListsData.[LIST.title.trim]}}
-          />
-        {{/each}}
+        <ConditionalLoadingSpinner @condition={{this.isLoadingAllLists}}>
+          {{#each filtered_topics_lists as |LIST|}}
+            <FilteredList
+              @listTitle={{LIST.title.trim}}
+              @listLength={{LIST.length}}
+              @listQuery={{LIST.query.trim}}
+              @listPluginOutlet={{LIST.plugin_outlet.trim}}
+              @listShowOn={{LIST.show_on}}
+              @listSelectedCategories={{LIST.selected_categories}}
+              @listSelectedTags={{LIST.selected_tags}}
+              @filteredTopics={{this.allListsData.[LIST.title.trim]}}
+            />
+          {{/each}}
+        </ConditionalLoadingSpinner>
       </template>
     }
   );
