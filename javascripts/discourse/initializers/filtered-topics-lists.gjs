@@ -2,33 +2,37 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { inject as service } from "@ember/service";
+import ConditionalLoadingSpinner from "discourse/components/conditional-loading-spinner";
+import TopicList from "discourse/components/topic-list";
 import { apiInitializer } from "discourse/lib/api";
 import { defaultHomepage } from "discourse/lib/utilities";
-import I18n from "I18n";
 
-// Global Set to store topic IDs already rendered
-const renderedTopicIds = new Set();
+// Global set to keep track of topic IDs that have already been displayed
+const displayedTopicIds = new Set();
 
 export default apiInitializer("1.14.0", (api) => {
-  const filteredTopicsLists = settings.presets;
+  const filtered_topics_lists = settings.presets;
 
-  filteredTopicsLists.forEach((LIST) => {
-    const listTitle = LIST.title.trim();
-    const listLength = LIST.length;
-    const listQuery = LIST.query.trim();
-    const listPluginOutlet = LIST.plugin_outlet.trim();
-    const listShowOn = LIST.show_on;
-    const listSelectedCategories = LIST.selected_categories;
-    const listSelectedTags = LIST.selected_tags;
+  filtered_topics_lists.forEach((LIST) => {
+    const list_title = LIST.title.trim();
+    const list_length = LIST.length;
+    const list_query = LIST.query.trim();
+    const list_plugin_outlet = LIST.plugin_outlet.trim();
+    const list_show_on = LIST.show_on;
+    const list_selected_categories = LIST.selected_categories;
+    const list_selected_tags = LIST.selected_tags;
 
     api.renderInOutlet(
-      listPluginOutlet,
+      list_plugin_outlet,
       class FilteredList extends Component {
         @service store;
         @service router;
         @service siteSettings;
         @tracked filteredTopics = [];
-        @tracked isLoading = true;
+        @tracked isLoading = false; // Add loading state for better UX
+
+        @tracked categories = [];
+        @tracked tags = [];
 
         constructor() {
           super(...arguments);
@@ -37,34 +41,39 @@ export default apiInitializer("1.14.0", (api) => {
 
         @action
         async findFilteredTopics() {
+          this.isLoading = true; // Set loading to true while fetching
           try {
-            this.isLoading = true;
-
             const topicList = await this.store.findFiltered("topicList", {
               filter: "filter",
-              params: { q: listQuery },
+              params: {
+                q: list_query,
+              },
             });
 
             if (topicList.topics) {
-              const uniqueTopics = topicList.topics.filter(
-                (t) => !renderedTopicIds.has(t.id)
-              );
-
-              uniqueTopics.slice(0, listLength).forEach((t) =>
-                renderedTopicIds.add(t.id)
-              );
-
-              this.filteredTopics = uniqueTopics.slice(0, listLength);
+              const uniqueTopics = [];
+              for (const topic of topicList.topics) {
+                // If the topic hasn't been displayed yet
+                if (!displayedTopicIds.has(topic.id)) {
+                  uniqueTopics.push(topic);
+                  displayedTopicIds.add(topic.id); // Add it to our global tracker
+                }
+                // Stop once we've collected enough unique topics for this list
+                if (uniqueTopics.length >= list_length) {
+                  break;
+                }
+              }
+              this.filteredTopics = uniqueTopics;
             }
           } finally {
-            this.isLoading = false;
+            this.isLoading = false; // Always set loading to false when done
           }
         }
 
         get showOnRoute() {
           const currentRoute = this.router.currentRoute;
 
-          switch (listShowOn) {
+          switch (list_show_on) {
             case "everywhere":
               return !currentRoute.name.includes("admin");
 
@@ -106,23 +115,44 @@ export default apiInitializer("1.14.0", (api) => {
               return currentRoute.name === "discovery.hot";
 
             case "selected_categories":
-              const categoryId = currentRoute.attributes?.category?.id;
+              const category_id = currentRoute.attributes?.category?.id;
               return (
                 currentRoute.name === "discovery.category" &&
-                listSelectedCategories.includes(categoryId)
+                list_selected_categories.includes(category_id)
               );
 
             case "selected_tags":
-              const tagId = currentRoute.attributes?.tag?.id;
+              const tag_id = currentRoute.attributes?.tag?.id;
               return (
                 currentRoute.name === "tag.show" &&
-                listSelectedTags.includes(tagId)
+                list_selected_tags.includes(tag_id)
               );
 
             default:
               return false;
           }
         }
+
+        <template>
+          {{#if this.showOnRoute}}
+            <div class="filtered-topics-list {{list_plugin_outlet}}">
+              <div class="filtered-topics-list__wrapper">
+                {{#if list_title}}
+                  <div class="filtered-topics-list__header">
+                    <h2>{{list_title}}</h2>
+                  </div>
+                {{/if}}
+                <ConditionalLoadingSpinner @condition={{this.isLoading}}>
+                  <TopicList
+                    @topics={{this.filteredTopics}}
+                    @showPosters="true"
+                    class="filtered-topics-list__content"
+                  />
+                </ConditionalLoadingSpinner>
+              </div>
+            </div>
+          {{/if}}
+        </template>
       }
     );
   });
